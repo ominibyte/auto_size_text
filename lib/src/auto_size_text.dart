@@ -32,6 +32,7 @@ class AutoSizeText extends StatefulWidget {
     this.textScaleFactor,
     this.maxLines,
     this.semanticsLabel,
+    this.layoutChangeListener
   })  : textSpan = null,
         super(key: key);
 
@@ -57,6 +58,7 @@ class AutoSizeText extends StatefulWidget {
     this.textScaleFactor,
     this.maxLines,
     this.semanticsLabel,
+    this.layoutChangeListener
   })  : data = null,
         super(key: key);
 
@@ -215,6 +217,10 @@ class AutoSizeText extends StatefulWidget {
   /// ```
   final String? semanticsLabel;
 
+  /// Called when the layout changes to report the number of lines as well as the
+  /// current font size
+  final AutoSizeTextLayoutChangeListener? layoutChangeListener;
+
   @override
   _AutoSizeTextState createState() => _AutoSizeTextState();
 }
@@ -257,6 +263,7 @@ class _AutoSizeTextState extends State<AutoSizeText> {
       final result = _calculateFontSize(size, style, maxLines);
       final fontSize = result[0] as double;
       final textFits = result[1] as bool;
+      final numberOfLines = result[2] as int;
 
       Widget text;
 
@@ -267,10 +274,17 @@ class _AutoSizeTextState extends State<AutoSizeText> {
         text = _buildText(fontSize, style, maxLines);
       }
 
-      if (widget.overflowReplacement != null && !textFits) {
-        return widget.overflowReplacement!;
-      } else {
-        return text;
+      try {
+        if (widget.overflowReplacement != null && !textFits) {
+          return widget.overflowReplacement!;
+        } else {
+          return text;
+        }
+      }
+      finally {
+        if (widget.layoutChangeListener != null) {
+          widget.layoutChangeListener!(fontSize, numberOfLines, textFits);
+        }
       }
     });
   }
@@ -325,8 +339,9 @@ class _AutoSizeTextState extends State<AutoSizeText> {
       final num defaultFontSize =
           style!.fontSize!.clamp(widget.minFontSize, widget.maxFontSize);
       final defaultScale = defaultFontSize * userScale / style.fontSize!;
-      if (_checkTextFits(span, defaultScale, maxLines, size)) {
-        return <Object>[defaultFontSize * userScale, true];
+      final textMetrics = _getTextMetrics(span, defaultScale, maxLines, size);
+      if (textMetrics[0] as bool) {
+        return <Object>[defaultFontSize * userScale, true, textMetrics[1] as int];
       }
 
       left = (widget.minFontSize / widget.stepGranularity).floor();
@@ -337,6 +352,7 @@ class _AutoSizeTextState extends State<AutoSizeText> {
     }
 
     var lastValueFits = false;
+    var numberOfLines = 1;
     while (left <= right) {
       final mid = (left + (right - left) / 2).floor();
       double scale;
@@ -345,7 +361,9 @@ class _AutoSizeTextState extends State<AutoSizeText> {
       } else {
         scale = presetFontSizes[mid] * userScale / style!.fontSize!;
       }
-      if (_checkTextFits(span, scale, maxLines, size)) {
+      final textMetrics = _getTextMetrics(span, scale, maxLines, size);
+      numberOfLines = textMetrics[1] as int;
+      if (textMetrics[0] as bool) {
         left = mid + 1;
         lastValueFits = true;
       } else {
@@ -364,11 +382,11 @@ class _AutoSizeTextState extends State<AutoSizeText> {
       fontSize = presetFontSizes[right] * userScale;
     }
 
-    return <Object>[fontSize, lastValueFits];
+    return <Object>[fontSize, lastValueFits, numberOfLines];
   }
 
-  bool _checkTextFits(
-      TextSpan text, double scale, int? maxLines, BoxConstraints constraints) {
+  List _getTextMetrics(
+    TextSpan text, double scale, int? maxLines, BoxConstraints constraints) {
     if (!widget.wrapWords) {
       final words = text.toPlainText().split(RegExp('\\s+'));
 
@@ -386,10 +404,11 @@ class _AutoSizeTextState extends State<AutoSizeText> {
       );
 
       wordWrapTextPainter.layout(maxWidth: constraints.maxWidth);
+      final numberOfLines = wordWrapTextPainter.computeLineMetrics().length;
 
       if (wordWrapTextPainter.didExceedMaxLines ||
           wordWrapTextPainter.width > constraints.maxWidth) {
-        return false;
+        return <Object>[false, numberOfLines];
       }
     }
 
@@ -404,10 +423,11 @@ class _AutoSizeTextState extends State<AutoSizeText> {
     );
 
     textPainter.layout(maxWidth: constraints.maxWidth);
+    final numberOfLines = textPainter.computeLineMetrics().length;
 
-    return !(textPainter.didExceedMaxLines ||
+    return <Object>[!(textPainter.didExceedMaxLines ||
         textPainter.height > constraints.maxHeight ||
-        textPainter.width > constraints.maxWidth);
+        textPainter.width > constraints.maxWidth), numberOfLines];
   }
 
   Widget _buildText(double fontSize, TextStyle style, int? maxLines) {
@@ -456,3 +476,6 @@ class _AutoSizeTextState extends State<AutoSizeText> {
     super.dispose();
   }
 }
+
+typedef AutoSizeTextLayoutChangeListener = Function(double fontSize,
+    int numberOfLines, bool textFits);
